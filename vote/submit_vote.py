@@ -95,11 +95,19 @@ def list_screenshots(folder: str = SCREENSHOT_DIR) -> List[str]:
     return files
 
 
+_IMAGE_CACHE: Dict[str, tuple[bytes, str, str]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
 def prepare_image_bytes(filepath: str) -> tuple[bytes, str, str]:
     """
     Membaca dan mengompres gambar sesuai aturan frontend SkyVote (max 1280px, quality 65%).
-    Mengembalikan (bytes_gambar, content_type, nama_file).
+    Hasil kompresi disimpan di RAM cache agar tidak mengulang kompresi CPU saat 1000x upload.
     """
+    with _CACHE_LOCK:
+        if filepath in _IMAGE_CACHE:
+            return _IMAGE_CACHE[filepath]
+
     filename = os.path.basename(filepath)
     mime_type, _ = mimetypes.guess_type(filepath)
     mime_type = mime_type or "image/jpeg"
@@ -112,10 +120,14 @@ def prepare_image_bytes(filepath: str) -> tuple[bytes, str, str]:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
             base_name = os.path.splitext(filename)[0] + ".jpg"
-            return buf.getvalue(), "image/jpeg", base_name
+            result = (buf.getvalue(), "image/jpeg", base_name)
+    else:
+        with open(filepath, "rb") as f:
+            result = (f.read(), mime_type, filename)
 
-    with open(filepath, "rb") as f:
-        return f.read(), mime_type, filename
+    with _CACHE_LOCK:
+        _IMAGE_CACHE[filepath] = result
+    return result
 
 
 def upload_bukti_to_storage(survey_id: int, filepath: str, suffix: str = "") -> str:
@@ -227,40 +239,46 @@ def main():
 
     while True:
         print(f" Target : {employee['nama']} ({employee.get('unit_kerja')})")
-        print(f" Survei : {survey['nama']} (ID: {survey['id']})")
-        print(f" Gambar : {len(screenshots)} file (vote/screenshot/)")
+        print(f" Survei : {survey['nama']}")
         print("-" * 42)
-        print(" [1] 10x Vote  (Random screenshot)")
-        print(" [2] 100x Vote (Random screenshot)")
+        print(" [1] 10x Vote   (10 threads)")
+        print(" [2] 100x Vote  (10 threads)")
+        print(" [3] 1000x Vote (25 threads)")
         print(" [0] Keluar")
         print("=" * 42)
 
-        choice = input(" Pilih [1/2/0]: ").strip()
+        choice = input(" Pilih [1/2/3/0]: ").strip()
         if choice == "0":
             print("Keluar.")
             break
         elif choice == "1":
             target_count = 10
+            workers = MAX_WORKERS
         elif choice == "2":
             target_count = 100
+            workers = MAX_WORKERS
+        elif choice == "3":
+            target_count = 1000
+            workers = 25
         else:
-            print("\n[!] Pilih 1, 2, atau 0.\n")
+            print("\n[!] Pilih 1, 2, 3, atau 0.\n")
             continue
 
         selected_files = build_randomized_screenshot_queue(screenshots, target_count)
         preview_names = ", ".join(os.path.basename(p) for p in selected_files[:5])
 
         print("-" * 42)
-        print(f" Mode   : {target_count}x Vote (Randomize)")
-        print(f" Target : {employee['nama']}")
-        print(f" Sample : {preview_names}, ...")
+        print(f" Mode    : {target_count}x Vote (Randomize)")
+        print(f" Target  : {employee['nama']}")
+        print(f" Threads : {workers} jalur paralel")
+        print(f" Sample  : {preview_names}, ...")
         confirm = input(" Lanjut? (gas/batal): ").strip().lower()
         if confirm != "gas":
             print("\n[BATAL] Pengiriman dibatalkan.\n")
             continue
 
         print("-" * 42)
-        print(f" Mengirim {target_count} bukti ({MAX_WORKERS} jalur)...")
+        print(f" Mengirim {target_count} bukti ({workers} jalur)...")
         print("-" * 42)
 
         start_time = time.time()
@@ -286,7 +304,7 @@ def main():
                     print(f"[{done_count}/{target_count}] GAGAL | {fname}")
                     print(f"       -> {e}")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [executor.submit(worker, fp) for fp in selected_files]
             concurrent.futures.wait(futures)
 

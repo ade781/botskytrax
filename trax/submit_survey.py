@@ -543,7 +543,7 @@ def verify_1000x_matrix() -> bool:
         return f"{name:<4} : {state}"
 
     def verify_loading(mod_name: str):
-        """Animasi loading 1.5 detik untuk setiap verifikasi modul."""
+        """Animasi loading 1.5 detik dengan efek decryption scramble."""
         tech_msg = {
             "CORE": "Verifying kernel & thread pool...",
             "NET": "Handshake TLS & socket sync...",
@@ -552,11 +552,20 @@ def verify_1000x_matrix() -> bool:
         }.get(mod_name, f"Validating {mod_name}...")
         print(f"{CYAN}[*] {tech_msg}{RESET}")
         bar_width = 20
+        target_word = "READY"
+        cipher_chars = "X#9$K@2!Q%7&Z*4"
         for step in range(1, 11):
             pct = step * 10
             filled = int(bar_width * pct / 100)
             bar = "#" * filled + "-" * (bar_width - filled)
-            sys.stdout.write(f"\r{YELLOW}[{bar}] {pct:3d}% // {mod_name}{RESET}")
+            # Decryption scramble: semakin dekat ke 100%, huruf READY makin terbuka
+            unlocked = step // 2
+            scrambled = "".join(
+                target_word[i] if i < unlocked else random.choice(cipher_chars)
+                for i in range(len(target_word))
+            )
+            color = GREEN if step == 10 else YELLOW
+            sys.stdout.write(f"\r{color}[{bar}] {pct:3d}% // {scrambled}{RESET}")
             sys.stdout.flush()
             time.sleep(0.15)  # 10 * 0.15s = 1.5 detik
         print()
@@ -671,13 +680,18 @@ def execute_menu_mode(
     progress["total_votes_sent"] = progress.get("total_votes_sent", 0) + summary.get("success_count", 0)
     save_progress(progress)
 
-    # Ringkasan akhir ringkas (38 karakter)
+    # Ringkasan akhir ringkas (38 karakter) + Telemetry Kecepatan
+    elapsed = summary["elapsed_seconds"]
+    speed = round(summary["attempted"] / elapsed, 1) if elapsed > 0 else 0.0
+    mission_status = "MISSION COMPLETE" if summary["failed_count"] == 0 else "PARTIAL COMPLETE"
+
     print(f"\n{GREEN}{'=' * 38}{RESET}")
-    print(f"{BOLD}{GREEN}         RINGKASAN PENGIRIMAN{RESET}")
+    print(f"{BOLD}{GREEN}         {mission_status}{RESET}")
     print(f"{GREEN}{'=' * 38}{RESET}")
     print(f" Berhasil : {summary['success_count']}/{summary['attempted']} ({summary['success_rate_percent']}%)")
     print(f" Gagal    : {summary['failed_count']}")
-    print(f" Durasi   : {summary['elapsed_seconds']} detik")
+    print(f" Durasi   : {elapsed} detik")
+    print(f" Speed    : {CYAN}{speed} vote/s{RESET}")
     print(f" Posisi   : Baris {end_line}")
     print(f"            {selected_bases[-1]}")
     if summary.get("failed_items"):
@@ -693,10 +707,27 @@ def execute_menu_mode(
     return progress
 
 
+def hacker_boot_sequence(total_emails: int):
+    """Animasi boot / hex stream singkat (1.2 detik) saat pertama kali program dibuka."""
+    boot_lines = [
+        (CYAN, f"[BOOT] 0x7FA2 9C 11 E4 00 B8 -> OK"),
+        (DIM,  f"[KERN] Mounting SKYTRAX-OPS v2.5..."),
+        (DIM,  f"[LOAD] email.json ({total_emails} nodes)..."),
+        (DIM,  f"[LOAD] f31 matrix (600 vectors)..."),
+        (CYAN, f"[SYNC] Checking progress state..."),
+        (GREEN, f"[AUTH] KEY: ADE7ASLI // VERIFIED"),
+    ]
+    print()
+    for color, msg in boot_lines:
+        print(f"{color}{msg}{RESET}")
+        time.sleep(0.20)  # 6 * 0.20s = 1.2 detik
+
+
 def main():
     """Menampilkan menu utama interaktif ala hacker beserta status progress."""
     all_emails = load_emails_from_file(EMAIL_SOURCE_FILE)
     progress = load_progress()
+    hacker_boot_sequence(len(all_emails))
 
     while True:
         next_idx = progress.get("next_index", 0)
@@ -704,7 +735,7 @@ def main():
         total_votes = progress.get("total_votes_sent", 0)
 
         print(f"{GREEN}{'-' * 38}{RESET}")
-        print(f"{BOLD}{GREEN}=== WELCOME ADE7ASLI               ==={RESET}")
+        print(f"{BOLD}{GREEN}===        WELCOME ADE7ASLI        ==={RESET}")
         print(f"{GREEN}{'-' * 38}{RESET}")
         print(f" USED : {CYAN}{next_idx}/{total_emails}{RESET} | SENT : {CYAN}{total_votes} votes{RESET}")
         if next_idx < total_emails:
