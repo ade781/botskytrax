@@ -1,8 +1,11 @@
+**/__pycache__/
 __pycache__/
 *.pyc
 .env
 .DS_Store
 *.log
 progress.json
+vote/screenshot/
+screenshot/
 .venv/
 venv/

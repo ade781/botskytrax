@@ -1,14 +1,17 @@
-# Skytrax Survey Automation
+# Skytrax & SkyVote Automation
 
-Aplikasi CLI Python untuk automasi pengujian dan pengiriman data form survei secara interaktif.
+Kumpulan skrip CLI Python untuk automasi pengujian dan pengiriman data survei secara terstruktur.
 
-## Gambaran Umum
-- `submit_survey.py`: Modul utama dengan menu interaktif, manajemen sesi HTTP/CSRF, validasi konfirmasi, dan pencatatan log.
-- `email_generator.py`: Modul pengelolaan, validasi format, dan variasi data email.
-- `email.json` & `survey_options.json`: Sumber data daftar email dan variasi opsi isian form.
-- `skytrax_postman_collection.json`: Koleksi Postman untuk pengujian API secara manual.
+## Struktur Project
+- `trax/`: Modul utama pengiriman survei (`submit_survey.py`, `email_generator.py`, `email.json`, `survey_options.json`, serta koleksi referensi).
+- `vote/`: Modul pengiriman bukti survei (`submit_vote.py` beserta folder `screenshot/`).
 
 ## Cara Menjalankan
-```bash
-python submit_survey.py
-```
+- **Mode Trax:**
+  ```bash
+  python trax/submit_survey.py
+  ```
+- **Mode Vote:**
+  ```bash
+  python vote/submit_vote.py
+  ```
