@@ -1,31 +1,56 @@
 """
-Module Bot Skytrax Survey Submitter & Batch Processor
-Mendukung pengiriman survei tunggal dan pemrosesan batch data email dinamis
-dengan validasi, logging terstruktur, penanganan error per item, serta integrasi mock server.
+Skytrax Airport Survey Automation System
+Mendukung mode interaktif:
+  1. Mode 10x Vote  : 1 email urut dari email.json -> 10 variasi angka acak (1-100)
+  2. Mode 100x Vote : 10 email urut dari email.json -> 100 variasi vote diacak urutannya
+Dilengkapi pelacakan progress baris pada email.json (progress.json),
+pengacakan payload form (survey_options.json), validasi konfirmasi (gas/batal),
+logging terstruktur, dan penanganan error per item.
 """
 
-import argparse
+from datetime import datetime
 import json
 import logging
+import os
+import random
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import requests
 
-# Integrasi modular dengan generator email & mock server
 from email_generator import (
-    generate_dynamic_emails,
+    load_emails_from_file,
+    randomize_from_base_email,
     validate_email_format,
     filter_and_deduplicate_emails,
-    load_emails_from_file,
 )
-from mock_server import MockSurveyServer
+
+# ==========================================================
+# KONFIGURASI UTAMA
+# ==========================================================
+EMAIL_SOURCE_FILE = "email.json"
+PROGRESS_FILE = "progress.json"
+SURVEY_OPTIONS_FILE = "survey_options.json"
+VARIANTS_PER_EMAIL = 10        # Jumlah variasi angka acak per email dasar (10x)
+RANDOM_NUM_MIN = 1
+RANDOM_NUM_MAX = 100
+DELAY_BETWEEN_REQUESTS = 0.0   # Jeda antar request dalam detik (opsional, misal 0.5)
+
+DEFAULT_BASE_URL = "https://www.worldairportsurvey.com"
+DEFAULT_CSRF_PATH = "/Surveys/Airport/admin.php?method=csrfToken"
+DEFAULT_SUBMIT_PATH = "/Surveys/Airport/admin.php"
+
+SERVER_VALIDATION_FIELDS = (
+    "f5,f31,f32,f6,f15,f16,f18,f20,f21,f22,f23,f24,f25,f27,"
+    "f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f45,f47,f48,f49,"
+    "f50,f51,f52,f53,f33,f28,f2"
+)
 
 # Konfigurasi Logging
 logger = logging.getLogger("SkytraxSurvey")
 
 
-def setup_logger(log_to_file: bool = True, log_filename: str = "batch_survey.log", verbose: bool = True):
+def setup_logger(log_to_file: bool = True, log_filename: str = "survey_run.log", verbose: bool = True):
     """Mengatur konfigurasi logger untuk konsol dan file."""
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
@@ -47,24 +72,71 @@ def setup_logger(log_to_file: bool = True, log_filename: str = "batch_survey.log
 
 
 # ==========================================================
-# KONFIGURASI UTAMA (Dapat disesuaikan langsung di sini)
+# MANAJEMEN PROGRESS (progress.json)
 # ==========================================================
-BATCH_COUNT = 100              # Jumlah email dinamis yang dibuat (ade1asli@ s/d ade100asli@)
-USE_MOCK_SERVER = True         # True: Uji pada Mock Server lokal (aman & cepat)
-                               # False: Kirim ke server publik Skytrax
-DELAY_BETWEEN_REQUESTS = 0.0   # Jeda antar request dalam detik (misal: 0.2 atau 1.0)
-DEFAULT_EMAIL_SINGLE = "ade7@Gmail.com"
+def load_progress(filepath: str = PROGRESS_FILE) -> Dict[str, Any]:
+    """Membaca status progress terakhir dari progress.json."""
+    default_state = {
+        "next_index": 0,
+        "last_email": None,
+        "last_line_number": None,
+        "total_emails_used": 0,
+        "total_votes_sent": 0,
+        "updated_at": None
+    }
+    if not os.path.exists(filepath):
+        return default_state
 
-# Nilai Default
-DEFAULT_BASE_URL = "https://www.worldairportsurvey.com"
-DEFAULT_CSRF_PATH = "/Surveys/Airport/admin.php?method=csrfToken"
-DEFAULT_SUBMIT_PATH = "/Surveys/Airport/admin.php"
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            default_state.update(data)
+        return default_state
+    except Exception:
+        return default_state
 
-SERVER_VALIDATION_FIELDS = (
-    "f5,f31,f32,f6,f15,f16,f18,f20,f21,f22,f23,f24,f25,f27,"
-    "f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f45,f47,f48,f49,"
-    "f50,f51,f52,f53,f33,f28,f2"
-)
+
+def save_progress(state: Dict[str, Any], filepath: str = PROGRESS_FILE):
+    """Menyimpan status progress terbaru ke progress.json."""
+    state["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+# ==========================================================
+# MANAJEMEN PAYLOAD & REQUEST
+# ==========================================================
+def load_survey_options(filepath: str = SURVEY_OPTIONS_FILE) -> Dict[str, List[str]]:
+    """Membaca opsi pilihan acak (f31, f32, f6) dari survey_options.json."""
+    default_options = {
+        "f31": ["Great hospitality, clean terminals, and smooth immigration process"],
+        "f32": ["Depart", "Arrival", "Transfer", "Visiting"],
+        "f6": ["1_2_month", "3_6_month", "12_month"]
+    }
+    if not os.path.exists(filepath):
+        return default_options
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "f31": data.get("f31") or default_options["f31"],
+            "f32": data.get("f32") or default_options["f32"],
+            "f6": data.get("f6") or default_options["f6"],
+        }
+    except Exception:
+        return default_options
+
+
+def get_randomized_survey_answers(filepath: str = SURVEY_OPTIONS_FILE) -> Dict[str, str]:
+    """Mengambil 1 kombinasi acak untuk field f31, f32, dan f6."""
+    options = load_survey_options(filepath)
+    return {
+        "f31": random.choice(options["f31"]),
+        "f32": random.choice(options["f32"]),
+        "f6": random.choice(options["f6"]),
+    }
 
 
 def get_default_headers(base_url: str = DEFAULT_BASE_URL) -> Dict[str, str]:
@@ -86,14 +158,7 @@ def fetch_csrf_token(
     headers: Dict[str, str],
     timeout: int = 15
 ) -> Tuple[str, str]:
-    """
-    Mengambil CSRF token dan cookie session dari server.
-
-    Returns:
-        Tuple[str, str]: (csrf_token, phpsessid)
-    Raises:
-        RuntimeError: Jika gagal mengambil token atau respons tidak valid.
-    """
+    """Mengambil CSRF token dan cookie session (PHPSESSID) dari server."""
     res_csrf = session.get(csrf_url, headers=headers, timeout=timeout)
     if res_csrf.status_code != 200:
         raise RuntimeError(f"Gagal mengambil token. HTTP Status: {res_csrf.status_code}")
@@ -113,19 +178,24 @@ def fetch_csrf_token(
 def build_form_payload(
     csrf_token: str,
     email: str,
-    custom_fields: Optional[Dict[str, str]] = None
+    custom_fields: Optional[Dict[str, str]] = None,
+    randomize_options: bool = True
 ) -> Dict[str, str]:
-    """
-    Menyusun payload form data survei secara dinamis dengan email yang ditentukan.
-    """
+    """Menyusun payload form data survei dengan email dinamis dan variasi acak."""
+    randomized = get_randomized_survey_answers() if randomize_options else {
+        "f31": "Great hospitality, clean terminals, and smooth immigration process",
+        "f32": "Depart",
+        "f6": "1_2_month",
+    }
+
     payload = {
         "method": "validateForm",
         "serverValidationFields": SERVER_VALIDATION_FIELDS,
         "csrf_token": csrf_token,
         "f5": "Soekarno-Hatta International Airport",
-        "f31": "Great hospitality, clean terminals, and smooth immigration process",
-        "f32": "Depart",
-        "f6": "1_2_month",
+        "f31": randomized["f31"],
+        "f32": randomized["f32"],
+        "f6": randomized["f6"],
         "f15": "5",
         "f16": "5",
         "f18": "5",
@@ -176,12 +246,7 @@ def submit_single_survey_request(
     custom_fields: Optional[Dict[str, str]] = None,
     timeout: int = 15
 ) -> Dict[str, Any]:
-    """
-    Eksekusi 1 pengiriman survei (ambil CSRF token -> kirim payload form -> tangani respons).
-
-    Returns:
-        Dict[str, Any]: Hasil pengiriman mencakup status, auto_id, date, time, dan data respons.
-    """
+    """Eksekusi 1 pengiriman survei (ambil CSRF token -> kirim payload -> validasi JSON)."""
     if not validate_email_format(email):
         return {
             "success": False,
@@ -230,6 +295,9 @@ def submit_single_survey_request(
                 "auto_id": field_values.get("AutoID", "-"),
                 "date": field_values.get("Date", "-"),
                 "time": field_values.get("Time", "-"),
+                "f31": form_data.get("f31", "-"),
+                "f32": form_data.get("f32", "-"),
+                "f6": form_data.get("f6", "-"),
                 "csrf_token": csrf_token,
                 "phpsessid": phpsessid,
                 "raw_response": result_json
@@ -255,29 +323,13 @@ def submit_single_survey_request(
 def batch_process_surveys(
     emails: List[str],
     base_url: str = DEFAULT_BASE_URL,
-    delay_between_requests: float = 0.0,
+    delay_between_requests: float = DELAY_BETWEEN_REQUESTS,
     fresh_session_per_item: bool = True,
     log_to_file: bool = True,
-    log_filename: str = "batch_survey.log",
-    verbose_log: bool = True
+    log_filename: str = "survey_run.log",
+    verbose_log: bool = False
 ) -> Dict[str, Any]:
-    """
-    Memproses daftar email secara batch dengan:
-    1. Validasi format email.
-    2. Deteksi & eliminasi data duplikat.
-    3. Logging setiap proses ke konsol & file.
-    4. Penanganan error secara individual per item.
-    5. Ringkasan hasil pemrosesan.
-
-    Args:
-        emails: Daftar email yang akan diproses.
-        base_url: Alamat target server (bisa mock server atau server asli).
-        delay_between_requests: Jeda waktu antar request dalam detik.
-        fresh_session_per_item: True jika tiap submission menggunakan session terpisah (direkomendasikan).
-
-    Returns:
-        Dict[str, Any]: Ringkasan lengkap hasil pemrosesan batch.
-    """
+    """Memproses daftar email secara batch dengan tampilan terminal ringkas & log file."""
     setup_logger(log_to_file=log_to_file, log_filename=log_filename, verbose=verbose_log)
 
     start_time = time.time()
@@ -287,15 +339,9 @@ def batch_process_surveys(
     logger.info("          STARTING BATCH SURVEY PROCESS           ")
     logger.info("==================================================")
     logger.info(f"Target Base URL         : {base_url}")
-    logger.info(f"Total input email       : {total_input}")
-    logger.info(f"Fresh Session per item  : {fresh_session_per_item}")
+    logger.info(f"Total target vote       : {total_input}")
 
-    # 1. Filter format email & eliminasi duplikat
     valid_unique, duplicates, invalid_format = filter_and_deduplicate_emails(emails)
-
-    logger.info(f"Email valid & unik      : {len(valid_unique)}")
-    logger.info(f"Email format tidak valid: {len(invalid_format)}")
-    logger.info(f"Email duplikat          : {len(duplicates)}")
 
     for inv in invalid_format:
         logger.warning(f"Format email diabaikan (invalid): {inv}")
@@ -305,14 +351,15 @@ def batch_process_surveys(
     results: List[Dict[str, Any]] = []
     success_count = 0
     failed_count = 0
-
+    failed_items: List[Dict[str, str]] = []
     shared_session = requests.Session() if not fresh_session_per_item else None
 
-    # 2. Proses pengiriman per item
-    for idx, email in enumerate(valid_unique, start=1):
-        logger.info(f"[{idx}/{len(valid_unique)}] Memproses survey untuk: {email}")
+    print("\n" + "-" * 38)
+    print(f" Mengirim {len(valid_unique)} vote...")
+    print("-" * 38)
 
-        # Penanganan error individual
+    for idx, email in enumerate(valid_unique, start=1):
+        logger.info(f"[{idx}/{len(valid_unique)}] Mengirim vote untuk: {email}")
         current_session = requests.Session() if fresh_session_per_item else shared_session
         result = submit_single_survey_request(
             email=email,
@@ -325,15 +372,25 @@ def batch_process_surveys(
 
         if result.get("success"):
             success_count += 1
+            auto_id = result.get("auto_id", "-")
+            f31_val = result.get("f31", "-")
+            f32_val = result.get("f32", "-")
+            f6_val = result.get("f6", "-")
+
             logger.info(
-                f"  -> [BERHASIL] | AutoID: {result.get('auto_id')} | "
-                f"Waktu: {result.get('date')} {result.get('time')}"
+                f"  -> [BERHASIL] | AutoID: {auto_id} | "
+                f"f32: {f32_val} | f6: {f6_val} | f31: \"{f31_val}\""
             )
+            print(f"[{idx}/{len(valid_unique)}] OK | ID: {auto_id}")
+            print(f"       {email}")
+            print(f"       f31: \"{f31_val}\"")
         else:
             failed_count += 1
-            logger.error(
-                f"  -> [GAGAL] [{result.get('status')}] | {result.get('error')}"
-            )
+            err_msg = result.get("error", "Unknown error")
+            failed_items.append({"email": email, "error": err_msg})
+            logger.error(f"  -> [GAGAL] [{result.get('status')}] | {err_msg}")
+            print(f"[{idx}/{len(valid_unique)}] GAGAL | {err_msg}")
+            print(f"       {email}")
 
         if delay_between_requests > 0 and idx < len(valid_unique):
             time.sleep(delay_between_requests)
@@ -349,169 +406,175 @@ def batch_process_surveys(
         "attempted": len(valid_unique),
         "success_count": success_count,
         "failed_count": failed_count,
+        "failed_items": failed_items,
         "success_rate_percent": success_rate,
         "elapsed_seconds": elapsed_time,
-        "invalid_emails": invalid_format,
-        "duplicate_emails": duplicates,
         "results": results
     }
-
-    # 3. Cetak Ringkasan Hasil Pemrosesan
-    print("\n" + "=" * 55)
-    print("           RINGKASAN BATCH PROCESSING SURVEY             ")
-    print("=" * 55)
-    print(f" Total Email Input      : {total_input}")
-    print(f" Format Valid & Unik    : {len(valid_unique)}")
-    print(f" Format Tidak Valid     : {len(invalid_format)}")
-    print(f" Email Duplikat         : {len(duplicates)}")
-    print(f" Total Diproses (Kirim) : {len(valid_unique)}")
-    print(f" Berhasil (Success)     : {success_count}")
-    print(f" Gagal (Failed)         : {failed_count}")
-    print(f" Tingkat Keberhasilan   : {success_rate}%")
-    print(f" Total Waktu Eksekusi   : {elapsed_time} detik")
-    print("=" * 55)
 
     return summary
 
 
-def submit_skytrax_survey(email: str = "ade7@Gmail.com", base_url: str = DEFAULT_BASE_URL):
+# ==========================================================
+# LOGIKA MENU INTERAKTIF
+# ==========================================================
+def prepare_vote_queue(
+    base_emails: List[str],
+    variants_per_email: int = VARIANTS_PER_EMAIL,
+    shuffle_queue: bool = False
+) -> List[str]:
     """
-    Fungsi legacy yang dipertahankan untuk backward compatibility pengiriman tunggal.
+    Menghasilkan daftar email vote dari email dasar dengan variasi angka acak 1-100.
+    Jika shuffle_queue=True (mode 100x), seluruh antrean vote akan diacak urutannya.
     """
-    session = requests.Session()
-    headers = get_default_headers(base_url)
-    csrf_url = f"{base_url.rstrip('/')}{DEFAULT_CSRF_PATH}"
-    submit_url = f"{base_url.rstrip('/')}{DEFAULT_SUBMIT_PATH}"
+    vote_queue: List[str] = []
+    for base_email in base_emails:
+        variants = randomize_from_base_email(
+            base_email=base_email,
+            count=variants_per_email,
+            min_number=RANDOM_NUM_MIN,
+            max_number=RANDOM_NUM_MAX
+        )
+        vote_queue.extend(variants)
 
-    print("==================================================")
-    print("      SKYTRAX AIRPORT SURVEY BOT SUBMITTER        ")
-    print("==================================================")
+    if shuffle_queue:
+        random.shuffle(vote_queue)
 
-    print("\n[1/2] Mengambil CSRF Token & Session Cookie dari server...")
-    try:
-        csrf_token, phpsessid = fetch_csrf_token(session, csrf_url, headers)
-    except Exception as e:
-        print(f"[-] GAGAL mengambil token: {e}")
-        return
+    return vote_queue
 
-    print(f"[+] CSRF Token   : {csrf_token}")
-    print(f"[+] PHPSESSID    : {phpsessid}")
 
-    form_data = build_form_payload(csrf_token, email)
+def execute_menu_mode(
+    all_emails: List[str],
+    progress: Dict[str, Any],
+    base_email_count: int,
+    shuffle_queue: bool,
+    mode_label: str
+) -> Dict[str, Any]:
+    """Menjalankan mode 10x atau 100x dengan validasi konfirmasi (gas/batal)."""
+    next_idx = progress.get("next_index", 0)
+    total_available = len(all_emails)
 
-    print(f"\n[2/2] Mengirimkan data survey ke {submit_url} (Email: {email})...")
-    res_submit = session.post(submit_url, headers=headers, data=form_data)
-    print(f"[+] HTTP Status  : {res_submit.status_code}")
+    if next_idx >= total_available:
+        print("\n[INFO] Seluruh email di email.json sudah habis terpakai!")
+        return progress
 
-    try:
-        result = res_submit.json()
-        if result.get("validated") is True:
-            autoid = result.get("fieldValues", {}).get("AutoID", "-")
-            date = result.get("fieldValues", {}).get("Date", "-")
-            time_val = result.get("fieldValues", {}).get("Time", "-")
-            res_email = result.get("fieldValues", {}).get("f2", "-")
+    selected_bases = all_emails[next_idx: next_idx + base_email_count]
+    if len(selected_bases) < base_email_count:
+        print(
+            f"\n[PERINGATAN] Sisa email di {EMAIL_SOURCE_FILE} hanya tinggal {len(selected_bases)} "
+            f"(dibutuhkan {base_email_count})."
+        )
 
-            print("\n==================================================")
-            print("       [OK] SURVEY BERHASIL TERSUBMIT!            ")
-            print("==================================================")
-            print(f" No. AutoID : {autoid}")
-            print(f" Waktu      : {date} {time_val}")
-            print(f" Email      : {res_email}")
-            print(f" Validated  : {result.get('validated')}")
-            print("==================================================")
-        else:
-            print("\n[-] VALIDASI GAGAL:")
-            print(json.dumps(result, indent=2))
-    except Exception:
-        print("\n[-] Respon Mentah dari Server:")
-        print(res_submit.text)
+    total_votes = len(selected_bases) * VARIANTS_PER_EMAIL
+    start_line = next_idx + 2
+    end_line = next_idx + len(selected_bases) + 1
+
+    print("\n" + "-" * 38)
+    print(f" PREVIEW: {mode_label}")
+    print("-" * 38)
+    if len(selected_bases) == 1:
+        print(f" Baris {start_line} ({selected_bases[0]})")
+    else:
+        print(f" Baris {start_line} s/d {end_line} ({len(selected_bases)} email)")
+        for i, em in enumerate(selected_bases, start=start_line):
+            print(f"  {i:4d}. {em}")
+    print(f" Total : {total_votes} vote" + (" (acak)" if shuffle_queue else ""))
+    print("-" * 38)
+
+    confirm = input(" Lanjut? (gas/batal): ").strip().lower()
+    if confirm != "gas":
+        print("\n[BATAL] Progress tidak berubah.\n")
+        return progress
+
+    # Generate antrean vote sesuai mode
+    vote_queue = prepare_vote_queue(
+        base_emails=selected_bases,
+        variants_per_email=VARIANTS_PER_EMAIL,
+        shuffle_queue=shuffle_queue
+    )
+
+    summary = batch_process_surveys(
+        emails=vote_queue,
+        base_url=DEFAULT_BASE_URL,
+        delay_between_requests=DELAY_BETWEEN_REQUESTS
+    )
+
+    # Update progress hanya setelah eksekusi selesai dijalankan
+    new_next_idx = next_idx + len(selected_bases)
+    progress["next_index"] = new_next_idx
+    progress["last_email"] = selected_bases[-1]
+    progress["last_line_number"] = end_line
+    progress["total_emails_used"] = new_next_idx
+    progress["total_votes_sent"] = progress.get("total_votes_sent", 0) + summary.get("success_count", 0)
+    save_progress(progress)
+
+    # Ringkasan akhir ringkas (38 karakter)
+    print("\n" + "=" * 38)
+    print("         RINGKASAN PENGIRIMAN")
+    print("=" * 38)
+    print(f" Berhasil : {summary['success_count']}/{summary['attempted']} ({summary['success_rate_percent']}%)")
+    print(f" Gagal    : {summary['failed_count']}")
+    print(f" Durasi   : {summary['elapsed_seconds']} detik")
+    print(f" Posisi   : Baris {end_line}")
+    print(f"            {selected_bases[-1]}")
+    if summary.get("failed_items"):
+        print("-" * 38)
+        print(" Daftar Gagal:")
+        for item in summary["failed_items"]:
+            print(f" - {item['email']}")
+            print(f"   ({item['error']})")
+    print("=" * 38 + "\n")
+
+    return progress
 
 
 def main():
-    """CLI Entry point dengan dukungan argumen dan konfigurasi langsung."""
-    parser = argparse.ArgumentParser(
-        description="Skytrax Airport Survey Bot Submitter & Batch Processing"
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["batch", "single"],
-        default="batch",
-        help="Mode eksekusi: 'batch' (default: proses 100 email dinamis) atau 'single' (1 email saja)."
-    )
-    parser.add_argument(
-        "--count",
-        type=int,
-        default=BATCH_COUNT,
-        help=f"Jumlah email dinamis yang dibuat untuk batch (default: {BATCH_COUNT})."
-    )
-    parser.add_argument(
-        "--email",
-        type=str,
-        default=DEFAULT_EMAIL_SINGLE,
-        help=f"Email spesifik untuk mode 'single' (default: {DEFAULT_EMAIL_SINGLE})."
-    )
-    parser.add_argument(
-        "--mock",
-        action="store_true",
-        default=None,
-        help="Paksa gunakan mock server lokal (mengabaikan nilai USE_MOCK_SERVER)."
-    )
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        default=False,
-        help="Paksa kirim ke server publik live (worldairportsurvey.com)."
-    )
-    parser.add_argument(
-        "--file",
-        type=str,
-        default=None,
-        help="Path ke file JSON berisi daftar email khusus (contoh: email.json)."
-    )
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=DELAY_BETWEEN_REQUESTS,
-        help=f"Delay jeda antar request batch dalam detik (default: {DELAY_BETWEEN_REQUESTS})."
-    )
+    """Menampilkan menu utama interaktif ringkas beserta status progress."""
+    all_emails = load_emails_from_file(EMAIL_SOURCE_FILE)
+    progress = load_progress()
 
-    args = parser.parse_args()
+    while True:
+        next_idx = progress.get("next_index", 0)
+        total_emails = len(all_emails)
 
-    if args.mode == "single":
-        submit_skytrax_survey(email=args.email)
-        return
+        print("=" * 38)
+        print("      SKYTRAX SURVEY AUTOMATION")
+        print("=" * 38)
+        print(f" Terpakai : {next_idx}/{total_emails} email")
+        if next_idx < total_emails:
+            print(f" Berikut  : Baris {next_idx + 2}")
+            print(f"            {all_emails[next_idx]}")
+        else:
+            print(" Berikut  : SELESAI (Habis)")
+        print("-" * 38)
+        print(" [1] 10x Vote")
+        print(" [2] 100x Vote")
+        print(" [0] Keluar")
+        print("=" * 38)
 
-    # Mode Batch: Tentukan target mock atau live
-    is_mock = USE_MOCK_SERVER
-    if args.live:
-        is_mock = False
-    elif args.mock is not None:
-        is_mock = args.mock
+        choice = input(" Pilih [1/2/0]: ").strip()
 
-    # 1. Dapatkan daftar email (dari file JSON jika ditentukan, atau via generator dinamis)
-    if args.file:
-        emails = load_emails_from_file(args.file)
-    else:
-        emails = generate_dynamic_emails(count=args.count)
-
-    print(f"\n[INFO] Menyiapkan pemrosesan batch {len(emails)} email dinamis...")
-    print(f"       Email pertama : {emails[0]}")
-    print(f"       Email terakhir: {emails[-1]}")
-    print(f"       Target        : {'MOCK SERVER LOKAL (Aman)' if is_mock else 'SERVER PUBLIK SKYTRAX'}")
-
-    if is_mock:
-        with MockSurveyServer() as mock:
-            batch_process_surveys(
-                emails=emails,
-                base_url=mock.base_url,
-                delay_between_requests=args.delay
+        if choice == "1":
+            progress = execute_menu_mode(
+                all_emails=all_emails,
+                progress=progress,
+                base_email_count=1,
+                shuffle_queue=False,
+                mode_label="10x Vote"
             )
-    else:
-        batch_process_surveys(
-            emails=emails,
-            base_url=DEFAULT_BASE_URL,
-            delay_between_requests=args.delay
-        )
+        elif choice == "2":
+            progress = execute_menu_mode(
+                all_emails=all_emails,
+                progress=progress,
+                base_email_count=10,
+                shuffle_queue=True,
+                mode_label="100x Vote"
+            )
+        elif choice == "0":
+            print("\nKeluar dari program.\n")
+            break
+        else:
+            print("\n[!] Pilih 1, 2, atau 0.\n")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ validasi format email, dan penanganan data duplikat.
 
 import json
 import os
+import random
 import re
 from typing import List, Tuple, Set
 
@@ -46,6 +47,61 @@ def generate_dynamic_emails(
         for i in range(start_index, start_index + count)
     ]
     return emails
+
+
+def generate_random_numbered_emails(
+    count: int = 10,
+    prefix: str = "galangrakha",
+    suffix: str = "",
+    domain: str = "gmail.com",
+    min_number: int = 1,
+    max_number: int = 100
+) -> List[str]:
+    """
+    Menghasilkan daftar email dengan angka acak unik dari rentang min_number s/d max_number.
+    Contoh: galangrakha(angka)@gmail.com dengan angka 1-100 di-randomize sebanyak 10 kali.
+
+    Args:
+        count (int): Jumlah email yang ingin digenerate (default: 10).
+        prefix (str): Prefix nama email (default: "galangrakha").
+        suffix (str): Suffix opsional sebelum @ (default: "").
+        domain (str): Domain email (default: "gmail.com").
+        min_number (int): Batas bawah angka acak (default: 1).
+        max_number (int): Batas atas angka acak (default: 100).
+
+    Returns:
+        List[str]: Daftar email dengan angka teracak tanpa duplikat.
+    """
+    pool_size = max_number - min_number + 1
+    if count < 0 or count > pool_size:
+        raise ValueError(f"count ({count}) harus berada di antara 0 dan {pool_size}.")
+
+    random_numbers = random.sample(range(min_number, max_number + 1), count)
+    return [f"{prefix}{num}{suffix}@{domain}" for num in random_numbers]
+
+
+def randomize_from_base_email(
+    base_email: str,
+    count: int = 10,
+    min_number: int = 1,
+    max_number: int = 100
+) -> List[str]:
+    """
+    Mengambil template email dasar (misal: 'galangrakha@gmail.com' dari email.json baris 1002)
+    lalu menyisipkan angka acak (1-100) sebelum '@' sebanyak `count` kali secara dinamis oleh sistem.
+    """
+    if "@" not in base_email:
+        raise ValueError(f"Format base_email tidak valid: {base_email}")
+
+    local_part, domain = base_email.strip().split("@", 1)
+    return generate_random_numbered_emails(
+        count=count,
+        prefix=local_part,
+        suffix="",
+        domain=domain,
+        min_number=min_number,
+        max_number=max_number
+    )
 
 
 def validate_email_format(email: str) -> bool:

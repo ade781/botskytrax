@@ -1,33 +1,14 @@
-# Bot Skytrax Survey Submitter
+# Skytrax Survey Automation
 
-Automasi pengujian pengisian form survei Skytrax World Airport Survey via Python script dan Postman Collection.
+Aplikasi CLI Python untuk automasi pengujian dan pengiriman data form survei secara interaktif.
 
-## File dalam Repositori
-- `submit_survey.py`: Script utama untuk automasi survei (mendukung single submit, batch processing, logging terstruktur, dan error handling).
-- `email_generator.py`: Generator email dinamis (pola `ade{i}asli@gmail.com`), validasi format regex, dan filter duplikasi.
-- `mock_server.py`: HTTP mock server lokal yang mensimulasikan endpoint Skytrax (`admin.php`) untuk pengujian batch 100 email yang aman.
-- `test_batch_processing.py`: Rangkaian unit test dan integration test otomatis.
-- `skytrax_postman_collection.json`: File koleksi Postman yang siap di-import untuk testing langsung di Postman.
-- `skytrax.html`: File referensi struktur halaman wrapper survei.
-- `form.html`: File referensi form survei iframe asli.
+## Gambaran Umum
+- `submit_survey.py`: Modul utama dengan menu interaktif, manajemen sesi HTTP/CSRF, validasi konfirmasi, dan pencatatan log.
+- `email_generator.py`: Modul pengelolaan, validasi format, dan variasi data email.
+- `email.json` & `survey_options.json`: Sumber data daftar email dan variasi opsi isian form.
+- `skytrax_postman_collection.json`: Koleksi Postman untuk pengujian API secara manual.
 
-## Menjalankan Script
-
-### 1. Langsung Menjalankan Batch 100 Email Dinamis (Default)
-Cukup jalankan:
+## Cara Menjalankan
 ```bash
 python submit_survey.py
-```
-Secara otomatis akan menghasilkan pola `ade1asli@gmail.com` s/d `ade100asli@gmail.com` dan memprosesnya secara batch.
-
-> **Catatan Konfigurasi:** Anda dapat mengubah jumlah email (`BATCH_COUNT`) dan target pengujian (`USE_MOCK_SERVER = True/False`) langsung di bagian atas file `submit_survey.py`.
-
-### 2. Pengiriman 1 Email Manual (Mode Single)
-```bash
-python submit_survey.py --mode single --email ade7@Gmail.com
-```
-
-### 3. Menjalankan Unit & Integration Test
-```bash
-python -m unittest -v test_batch_processing.py
 ```
