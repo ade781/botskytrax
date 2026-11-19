@@ -1,0 +1,196 @@
+{
+  "info": {
+    "name": "Skytrax World Airport Survey Testing",
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "description": "Collection otomatis untuk testing submit form Skytrax World Airport Survey (Get CSRF Token + Submit Form).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Get CSRF Token & Session",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "if (res && res.csrf_token) {",
+              "    pm.collectionVariables.set('csrf_token', res.csrf_token);",
+              "    console.log('CSRF Token saved:', res.csrf_token);",
+              "}",
+              "pm.test('CSRF token berhasil diambil', function () {",
+              "    pm.expect(res.csrf_token).to.be.a('string').and.not.empty;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Referer",
+            "value": "https://www.worldairportsurvey.com/Surveys/Airport/form.html",
+            "type": "text"
+          },
+          {
+            "key": "X-Requested-With",
+            "value": "XMLHttpRequest",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "https://www.worldairportsurvey.com/Surveys/Airport/admin.php?method=csrfToken",
+          "protocol": "https",
+          "host": [
+            "www",
+            "worldairportsurvey",
+            "com"
+          ],
+          "path": [
+            "Surveys",
+            "Airport",
+            "admin.php"
+          ],
+          "query": [
+            {
+              "key": "method",
+              "value": "csrfToken"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Submit Airport Survey Form",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Otomatis ambil CSRF token terbaru sebelum POST dikirim",
+              "pm.sendRequest({",
+              "    url: 'https://www.worldairportsurvey.com/Surveys/Airport/admin.php?method=csrfToken',",
+              "    method: 'GET',",
+              "    header: {",
+              "        'Referer': 'https://www.worldairportsurvey.com/Surveys/Airport/form.html',",
+              "        'X-Requested-With': 'XMLHttpRequest'",
+              "    }",
+              "}, function (err, res) {",
+              "    if (!err && res) {",
+              "        const data = res.json();",
+              "        if (data && data.csrf_token) {",
+              "            pm.collectionVariables.set('csrf_token', data.csrf_token);",
+              "            console.log('Auto-fetched csrf_token:', data.csrf_token);",
+              "        }",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "console.log('Response body:', pm.response.text());",
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://www.worldairportsurvey.com",
+            "type": "text"
+          },
+          {
+            "key": "Referer",
+            "value": "https://www.worldairportsurvey.com/Surveys/Airport/form.html",
+            "type": "text"
+          },
+          {
+            "key": "X-Requested-With",
+            "value": "XMLHttpRequest",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "method", "value": "validateForm", "type": "text" },
+            { "key": "serverValidationFields", "value": "", "type": "text" },
+            { "key": "csrf_token", "value": "{{csrf_token}}", "type": "text" },
+            { "key": "f5", "value": "Soekarno-Hatta International Airport", "description": "1. Best Airport Name", "type": "text" },
+            { "key": "f31", "value": "Great hospitality, clean terminals, and smooth immigration process", "description": "2. Reason", "type": "text" },
+            { "key": "f32", "value": "Depart", "description": "3. Experience type: Depart | Arrival | Transfer | Visiting", "type": "text" },
+            { "key": "f6", "value": "1_2_month", "description": "4. Last used: 1_2_month | 3_6_month | 12_month", "type": "text" },
+            { "key": "f15", "value": "5", "description": "5. Getting to and from the Airport (1-5)", "type": "text" },
+            { "key": "f16", "value": "5", "description": "6. Public transport options (1-5)", "type": "text" },
+            { "key": "f18", "value": "5", "description": "7. Taxi availability / prices (1-5)", "type": "text" },
+            { "key": "f20", "value": "5", "description": "8. Availability of luggage trolleys (1-5)", "type": "text" },
+            { "key": "f21", "value": "5", "description": "9. Terminal comfort, ambience & design (1-5)", "type": "text" },
+            { "key": "f22", "value": "5", "description": "10. Terminal cleanliness (1-5)", "type": "text" },
+            { "key": "f23", "value": "5", "description": "11. Seating facilities (1-5)", "type": "text" },
+            { "key": "f24", "value": "5", "description": "12. Washroom / shower facilities (1-5)", "type": "text" },
+            { "key": "f25", "value": "5", "description": "13. Terminal signage (1-5)", "type": "text" },
+            { "key": "f27", "value": "5", "description": "14. Clarity of boarding calls / PA (1-5)", "type": "text" },
+            { "key": "f34", "value": "5", "description": "15. Flight info screens (1-5)", "type": "text" },
+            { "key": "f35", "value": "5", "description": "16. Friendliness of airport staff (1-5)", "type": "text" },
+            { "key": "f36", "value": "5", "description": "17. Language skills of airport staff (1-5)", "type": "text" },
+            { "key": "f37", "value": "5", "description": "18. Check-in facilities & queuing (1-5)", "type": "text" },
+            { "key": "f38", "value": "5", "description": "19. Wayfinding and terminal layout (1-5)", "type": "text" },
+            { "key": "f39", "value": "5", "description": "20. Security screening waiting times (1-5)", "type": "text" },
+            { "key": "f40", "value": "5", "description": "21. Courtesy & helpfulness of security staff (1-5)", "type": "text" },
+            { "key": "f41", "value": "5", "description": "22. Departure immigration waiting times (1-5)", "type": "text" },
+            { "key": "f42", "value": "5", "description": "23. Walking distances (1-5)", "type": "text" },
+            { "key": "f43", "value": "5", "description": "24. Accessibility for disabled / PRM (1-5)", "type": "text" },
+            { "key": "f44", "value": "5", "description": "25. Family facilities (optional, 1-5)", "type": "text" },
+            { "key": "f45", "value": "5", "description": "26. WiFi service (1-5)", "type": "text" },
+            { "key": "f46", "value": "5", "description": "27. Charging stations (optional, 1-5)", "type": "text" },
+            { "key": "f47", "value": "5", "description": "28. Selection of shops (1-5)", "type": "text" },
+            { "key": "f48", "value": "5", "description": "29. Prices in shops (1-5)", "type": "text" },
+            { "key": "f49", "value": "5", "description": "30. Selection of food & drink (1-5)", "type": "text" },
+            { "key": "f50", "value": "5", "description": "31. Prices in restaurants / bars (1-5)", "type": "text" },
+            { "key": "f51", "value": "5", "description": "32. Arrival immigration queuing (1-5)", "type": "text" },
+            { "key": "f52", "value": "5", "description": "33. Attitude of immigration staff (1-5)", "type": "text" },
+            { "key": "f53", "value": "5", "description": "34. Baggage delivery times (1-5)", "type": "text" },
+            { "key": "f54", "value": "5", "description": "35. Lost luggage services (optional, 1-5)", "type": "text" },
+            { "key": "f33", "value": "Indonesia", "description": "36. Country where you live", "type": "text" },
+            { "key": "f28", "value": "I confirm that I agree to the Terms and Conditions", "description": "Terms & Conditions agreement", "type": "text" },
+            { "key": "f2", "value": "ade7@Gmail.com", "description": "Email address", "type": "text" }
+          ]
+        },
+        "url": {
+          "raw": "https://www.worldairportsurvey.com/Surveys/Airport/admin.php",
+          "protocol": "https",
+          "host": [
+            "www",
+            "worldairportsurvey",
+            "com"
+          ],
+          "path": [
+            "Surveys",
+            "Airport",
+            "admin.php"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "csrf_token",
+      "value": ""
+    }
+  ]
+}
