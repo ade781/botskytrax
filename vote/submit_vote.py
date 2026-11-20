@@ -32,7 +32,7 @@ SUPABASE_ANON_KEY = (
 )
 STORAGE_BUCKET = "survey-bukti"
 
-TARGET_NAMA = "Booster 1"
+TARGET_NAMA = "Booster 3"
 SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshot")
 MAX_IMAGE_DIMENSION = 1280
 JPEG_QUALITY = 65
