@@ -32,7 +32,7 @@ SUPABASE_ANON_KEY = (
 )
 STORAGE_BUCKET = "survey-bukti"
 
-TARGET_NAMA = "Booster 3"
+TARGET_NAMA = "Booster 6"
 SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshot")
 MAX_IMAGE_DIMENSION = 1280
 JPEG_QUALITY = 65
@@ -221,9 +221,11 @@ def build_randomized_screenshot_queue(screenshots: List[str], count: int) -> Lis
 
 
 def main():
-    print("=" * 42)
-    print("   SKYVOTE TEST SUBMITTER (BOOSTER 1)")
-    print("=" * 42)
+    title = f"SKYVOTE TEST SUBMITTER ({TARGET_NAMA.upper()})"
+    banner_width = max(42, len(title) + 6)
+    print("=" * banner_width)
+    print(title.center(banner_width))
+    print("=" * banner_width)
 
     screenshots = list_screenshots()
     if not screenshots:

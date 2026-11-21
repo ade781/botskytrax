@@ -14,11 +14,18 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import requests
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 try:
     import colorama
@@ -31,9 +38,76 @@ GREEN = "\033[92m"
 CYAN = "\033[96m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
+MAGENTA = "\033[95m"
+BLUE = "\033[94m"
+WHITE = "\033[97m"
 DIM = "\033[90m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
+
+UI_WIDTH = 80
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Menghapus kode warna ANSI untuk menghitung panjang teks yang terlihat."""
+    return _ANSI_RE.sub("", text)
+
+
+def pad_right(text: str, width: int) -> str:
+    """Menambahkan spasi di kanan berdasarkan panjang teks terlihat."""
+    vis_len = len(strip_ansi(text))
+    if vis_len >= width:
+        return text
+    return text + (" " * (width - vis_len))
+
+
+def center_text(text: str, width: int) -> str:
+    """Memusatkan teks berdasarkan panjang teks terlihat."""
+    vis_len = len(strip_ansi(text))
+    if vis_len >= width:
+        return text
+    left_pad = (width - vis_len) // 2
+    right_pad = width - vis_len - left_pad
+    return (" " * left_pad) + text + (" " * right_pad)
+
+
+def box_top(width: int = UI_WIDTH, color: str = GREEN) -> str:
+    return f"{color}╔{'═' * (width - 2)}╗{RESET}"
+
+
+def box_sep(width: int = UI_WIDTH, color: str = GREEN) -> str:
+    return f"{color}╠{'═' * (width - 2)}╣{RESET}"
+
+
+def box_thin_sep(width: int = UI_WIDTH, color: str = DIM) -> str:
+    return f"{color}╟{'─' * (width - 2)}╢{RESET}"
+
+
+def box_bottom(width: int = UI_WIDTH, color: str = GREEN) -> str:
+    return f"{color}╚{'═' * (width - 2)}╝{RESET}"
+
+
+def box_line(text: str = "", width: int = UI_WIDTH, color: str = GREEN, align: str = "left") -> str:
+    """Membungkus satu baris teks di dalam border ║ ... ║ selebar UI_WIDTH."""
+    inner_width = width - 4
+    vis_len = len(strip_ansi(text))
+    if vis_len > inner_width:
+        # Potong aman jika teks polos melebihi batas inner_width
+        plain = strip_ansi(text)
+        content = plain[: inner_width - 3] + "..."
+    else:
+        content = center_text(text, inner_width) if align == "center" else pad_right(text, inner_width)
+    return f"{color}║{RESET} {content} {color}║{RESET}"
+
+
+def render_progress_bar(current: int, total: int, bar_width: int = 32, fill_color: str = GREEN) -> str:
+    """Membuat progress bar Unicode [████░░░░] beserta persentase."""
+    pct = (current / total * 100.0) if total > 0 else 0.0
+    filled = int(round(bar_width * current / total)) if total > 0 else 0
+    filled = max(0, min(bar_width, filled))
+    bar = f"{fill_color}{'█' * filled}{DIM}{'░' * (bar_width - filled)}{RESET}"
+    return f"[{bar}] {BOLD}{pct:5.1f}%{RESET}"
 
 from email_generator import (
     load_emails_from_file,
@@ -388,9 +462,10 @@ def batch_process_surveys(
     print_lock = threading.Lock()
     completed_counter = 0
 
-    print("\n" + "-" * 38)
-    print(f" Mengirim {len(valid_unique)} vote ({max_workers} jalur paralel)...")
-    print("-" * 38)
+    print()
+    print(box_top(UI_WIDTH, CYAN))
+    print(box_line(f"{BOLD}{CYAN}>> LIVE TRANSMISSION STREAM <<   TARGET: {len(valid_unique)} VOTES | THREADS: {max_workers}{RESET}", UI_WIDTH, CYAN, align="center"))
+    print(box_bottom(UI_WIDTH, CYAN))
 
     def worker_submit(idx_original: int, email: str) -> Dict[str, Any]:
         nonlocal success_count, failed_count, completed_counter
@@ -406,6 +481,8 @@ def batch_process_surveys(
             completed_counter += 1
             current_num = completed_counter
             results.append(result)
+            total_valid = len(valid_unique)
+            counter_tag = f"{DIM}[{current_num:3d}/{total_valid:3d}]{RESET}"
 
             if result.get("success"):
                 success_count += 1
@@ -418,16 +495,15 @@ def batch_process_surveys(
                     f"  -> [BERHASIL] | AutoID: {auto_id} | "
                     f"f32: {f32_val} | f6: {f6_val} | f31: \"{f31_val}\""
                 )
-                print(f"[{current_num}/{len(valid_unique)}] OK | ID: {auto_id}")
-                print(f"       {email}")
-                print(f"       f31: \"{f31_val}\"")
+                f31_short = f31_val if len(f31_val) <= 46 else f31_val[:43] + "..."
+                print(f" {counter_tag} {BOLD}{GREEN}[ OK ]{RESET} ID:{CYAN}{auto_id:<8}{RESET} | {WHITE}{email}{RESET}")
+                print(f"           {DIM}├─ mode:{f32_val:<8} freq:{f6_val:<10} │ \"{f31_short}\"{RESET}")
             else:
                 failed_count += 1
                 err_msg = result.get("error", "Unknown error")
                 failed_items.append({"email": email, "error": err_msg})
                 logger.error(f"  -> [GAGAL] [{result.get('status')}] | {err_msg}")
-                print(f"[{current_num}/{len(valid_unique)}] GAGAL | {err_msg}")
-                print(f"       {email}")
+                print(f" {counter_tag} {BOLD}{RED}[FAIL]{RESET} {WHITE}{email}{RESET} | {RED}{err_msg}{RESET}")
 
         return result
 
@@ -494,33 +570,44 @@ def prepare_vote_queue(
 
 
 def hacker_loading_sequence(workers: int, total_votes: int):
-    """Animasi loading teknikal ala hacker sebelum eksekusi pengiriman."""
+    """Animasi loading teknikal ala hacker tepat 1.5 detik sebelum eksekusi pengiriman."""
     steps = [
-        ("0x00A1", "Hooked TLSv1.3 cipher suite"),
-        ("0x01F4", "Seeding /dev/urandom entropy"),
-        ("0x02C8", "Generating CSRF token matrix"),
-        ("0x03B0", "Injecting f31 vector (600)"),
-        ("0x04E2", f"Binding {workers} async worker threads"),
-        ("0x05FF", f"Queueing {total_votes} encrypted payloads"),
+        ("0x00A1", "Hooked TLSv1.3 cipher suite (ECDHE-RSA-AES256-GCM)"),
+        ("0x01F4", "Seeding /dev/urandom cryptographic entropy pool"),
+        ("0x02C8", "Generating dynamic CSRF token matrix & session IDs"),
+        ("0x03B0", "Injecting f31 vector payload (600 randomized entries)"),
+        ("0x04E2", f"Binding {workers:02d} async worker threads to execution bus"),
+        ("0x05FF", f"Queueing {total_votes:04d} encrypted survey payloads"),
     ]
-    print(f"\n{DIM}{'-' * 38}{RESET}")
+    print()
+    print(box_top(UI_WIDTH, CYAN))
+    print(box_line(f"{BOLD}{CYAN}[*] INITIALIZING CYBERNETIC PAYLOAD ENGINE{RESET}", UI_WIDTH, CYAN, align="center"))
+    print(box_thin_sep(UI_WIDTH, CYAN))
+    # 6 steps * 0.15s = 0.90s
     for addr, msg in steps:
-        print(f"{CYAN}[{addr}]{RESET} {msg} {GREEN}[OK]{RESET}")
-        time.sleep(0.18)
+        line_str = f"{CYAN}[{addr}]{RESET} {WHITE}{msg:<58}{RESET} {BOLD}{GREEN}[ OK ]{RESET}"
+        print(box_line(line_str, UI_WIDTH, CYAN))
+        time.sleep(0.15)
 
-    bar_width = 20
-    for pct in range(0, 101, 10):
-        filled = int(bar_width * pct / 100)
-        bar = "#" * filled + "-" * (bar_width - filled)
-        sys.stdout.write(f"\r{GREEN}[{bar}] {pct:3d}% // EXEC{RESET}")
+    print(box_thin_sep(UI_WIDTH, CYAN))
+    # 12 steps * 0.05s = 0.60s -> Total animasi = 0.90s + 0.60s = 1.50 detik
+    bar_width = 44
+    total_ticks = 12
+    for step in range(1, total_ticks + 1):
+        pct = int(step * 100 / total_ticks)
+        filled = int(bar_width * step / total_ticks)
+        bar = f"{GREEN}{'█' * filled}{DIM}{'░' * (bar_width - filled)}{RESET}"
+        status_tag = "ARMED!" if step == total_ticks else "EXEC.."
+        sys.stdout.write(f"\r {CYAN}║{RESET} [{bar}] {BOLD}{GREEN}{pct:3d}%{RESET} // {YELLOW}{status_tag}{RESET} ")
         sys.stdout.flush()
         time.sleep(0.05)
-    print(f"\n{DIM}{'-' * 38}{RESET}")
+    print()
+    print(box_bottom(UI_WIDTH, CYAN))
 
 
 def verify_1000x_matrix() -> bool:
     """
-    Panel verifikasi 2x2 (OFF -> READY) khusus mode 1000x.
+    Panel verifikasi 2x2 (OFF -> READY) selebar 80 karakter khusus mode 1000x.
     Mengharuskan 4 kode root yang berbeda untuk mengaktifkan seluruh modul.
     Perintah kembali tidak ditampilkan di UI (hidden command).
     """
@@ -538,9 +625,9 @@ def verify_1000x_matrix() -> bool:
     }
     hidden_abort_commands = {"root exit", "root abort", "batal"}
 
-    def fmt_status(name: str, is_ready: bool) -> str:
-        state = f"{GREEN}READY{RESET}" if is_ready else f"{RED}OFF  {RESET}"
-        return f"{name:<4} : {state}"
+    def fmt_status(name: str, desc: str, is_ready: bool) -> str:
+        state = f"{BOLD}{GREEN}[READY]{RESET}" if is_ready else f"{BOLD}{RED}[ OFF ]{RESET}"
+        return f"{CYAN}{name:<4}{RESET} {DIM}({desc:<13}){RESET} : {state}"
 
     def verify_loading(mod_name: str):
         """Animasi loading 1.5 detik dengan efek decryption scramble."""
@@ -550,55 +637,59 @@ def verify_1000x_matrix() -> bool:
             "AUTH": "Decrypting Ade7asli root key...",
             "EXEC": "Arming 1000x launch vector...",
         }.get(mod_name, f"Validating {mod_name}...")
-        print(f"{CYAN}[*] {tech_msg}{RESET}")
-        bar_width = 20
+        print(f" {CYAN}[*]{RESET} {tech_msg}")
+        bar_width = 38
         target_word = "READY"
         cipher_chars = "X#9$K@2!Q%7&Z*4"
         for step in range(1, 11):
             pct = step * 10
             filled = int(bar_width * pct / 100)
-            bar = "#" * filled + "-" * (bar_width - filled)
-            # Decryption scramble: semakin dekat ke 100%, huruf READY makin terbuka
+            bar = "█" * filled + "░" * (bar_width - filled)
             unlocked = step // 2
             scrambled = "".join(
                 target_word[i] if i < unlocked else random.choice(cipher_chars)
                 for i in range(len(target_word))
             )
             color = GREEN if step == 10 else YELLOW
-            sys.stdout.write(f"\r{color}[{bar}] {pct:3d}% // {scrambled}{RESET}")
+            sys.stdout.write(f"\r {color}[{bar}] {pct:3d}% // DECRYPT: {scrambled}{RESET}")
             sys.stdout.flush()
             time.sleep(0.15)  # 10 * 0.15s = 1.5 detik
         print()
 
     while not all(modules.values()):
-        print(f"\n{YELLOW}{'-' * 38}{RESET}")
-        print(f"{BOLD}{CYAN} [!] 1000X LAUNCH MATRIX (25 THREADS){RESET}")
-        print(f"{YELLOW}{'-' * 38}{RESET}")
-        print(f" {fmt_status('CORE', modules['CORE'])}   {fmt_status('NET', modules['NET'])}")
-        print(f" {fmt_status('AUTH', modules['AUTH'])}   {fmt_status('EXEC', modules['EXEC'])}")
-        print(f"{YELLOW}{'-' * 38}{RESET}")
+        print()
+        print(box_top(UI_WIDTH, YELLOW))
+        print(box_line(f"{BOLD}{RED}[!] 1000X HEAVY LAUNCH MATRIX :: ROOT AUTHORIZATION REQUIRED{RESET}", UI_WIDTH, YELLOW, align="center"))
+        print(box_sep(UI_WIDTH, YELLOW))
+        row1 = f" {fmt_status('CORE', 'Thread Pool', modules['CORE'])}   │   {fmt_status('NET', 'TLS Socket', modules['NET'])}"
+        row2 = f" {fmt_status('AUTH', 'Root Key', modules['AUTH'])}   │   {fmt_status('EXEC', '1000x Bus', modules['EXEC'])}"
+        print(box_line(row1, UI_WIDTH, YELLOW))
+        print(box_line(row2, UI_WIDTH, YELLOW))
+        print(box_bottom(UI_WIDTH, YELLOW))
 
-        cmd = input(f"{GREEN} root@Ade7asli:~# {RESET}").strip().lower()
+        cmd = input(f" {BOLD}{GREEN}root@Ade7asli:~#{RESET} ").strip().lower()
 
         if cmd in hidden_abort_commands:
-            print(f"{RED}[!] ABORTED.{RESET}\n")
+            print(f" {RED}[!] ABORTED BY OPERATOR.{RESET}\n")
             return False
         elif cmd in secret_commands:
             mod_name = secret_commands[cmd]
             if not modules[mod_name]:
                 verify_loading(mod_name)
                 modules[mod_name] = True
-                print(f"{GREEN}[+] {mod_name} -> SUCCESS{RESET}")
+                print(f" {BOLD}{GREEN}[+] MODULE {mod_name} -> ONLINE / READY{RESET}")
             else:
-                print(f"{CYAN}[*] {mod_name} -> ALREADY READY{RESET}")
+                print(f" {CYAN}[*] MODULE {mod_name} -> ALREADY READY{RESET}")
         else:
-            print(f"{RED}[-] ACCESS DENIED{RESET}")
+            print(f" {RED}[-] ACCESS DENIED // INVALID ROOT COMMAND{RESET}")
 
-    print(f"\n{GREEN}{'-' * 38}{RESET}")
-    print(f" {fmt_status('CORE', True)}   {fmt_status('NET', True)}")
-    print(f" {fmt_status('AUTH', True)}   {fmt_status('EXEC', True)}")
-    print(f"{GREEN}{'-' * 38}{RESET}")
-    print(f"{BOLD}{GREEN}[+] ALL SYSTEMS READY // LAUNCHING!{RESET}")
+    print()
+    print(box_top(UI_WIDTH, GREEN))
+    print(box_line(f"{BOLD}{GREEN}[+] ALL SYSTEMS ARMED & READY // LAUNCHING 1000X PAYLOAD{RESET}", UI_WIDTH, GREEN, align="center"))
+    print(box_sep(UI_WIDTH, GREEN))
+    print(box_line(f" {fmt_status('CORE', 'Thread Pool', True)}   │   {fmt_status('NET', 'TLS Socket', True)}", UI_WIDTH, GREEN))
+    print(box_line(f" {fmt_status('AUTH', 'Root Key', True)}   │   {fmt_status('EXEC', '1000x Bus', True)}", UI_WIDTH, GREEN))
+    print(box_bottom(UI_WIDTH, GREEN))
     return True
 
 
@@ -611,18 +702,18 @@ def execute_menu_mode(
     max_workers: int = MAX_WORKERS,
     require_matrix_auth: bool = False
 ) -> Dict[str, Any]:
-    """Menjalankan mode 10x, 100x, atau 1000x dengan validasi & animasi hacker."""
+    """Menjalankan mode 10x, 100x, atau 1000x dengan validasi & UI widescreen 80 kolom."""
     next_idx = progress.get("next_index", 0)
     total_available = len(all_emails)
 
     if next_idx >= total_available:
-        print(f"\n{YELLOW}[INFO] Seluruh email di email.json sudah habis terpakai!{RESET}\n")
+        print(f"\n {YELLOW}[INFO] Seluruh email di email.json sudah habis terpakai!{RESET}\n")
         return progress
 
     selected_bases = all_emails[next_idx: next_idx + base_email_count]
     if len(selected_bases) < base_email_count:
         print(
-            f"\n{YELLOW}[PERINGATAN] Sisa email di {EMAIL_SOURCE_FILE} tinggal {len(selected_bases)} "
+            f"\n {YELLOW}[PERINGATAN] Sisa email di {EMAIL_SOURCE_FILE} tinggal {len(selected_bases)} "
             f"(dibutuhkan {base_email_count}).{RESET}"
         )
 
@@ -630,34 +721,35 @@ def execute_menu_mode(
     start_line = next_idx + 2
     end_line = next_idx + len(selected_bases) + 1
 
-    # Animasi loading teknikal ala hacker langsung saat menu dipilih
+    # Animasi loading teknikal ala hacker (1.5 detik)
     hacker_loading_sequence(workers=max_workers, total_votes=total_votes)
 
-    print(f"\n{CYAN}{'-' * 38}{RESET}")
-    print(f"{BOLD} PREVIEW: {mode_label}{RESET}")
-    print(f"{CYAN}{'-' * 38}{RESET}")
+    print()
+    print(box_top(UI_WIDTH, CYAN))
+    print(box_line(f"{BOLD}{CYAN}>> PRE-FLIGHT MISSION BRIEFING :: {mode_label.upper()} <<{RESET}", UI_WIDTH, CYAN, align="center"))
+    print(box_sep(UI_WIDTH, CYAN))
+    print(box_line(f" {DIM}TARGET VOTES :{RESET} {BOLD}{GREEN}{total_votes} votes{RESET}    {DIM}│  WORKERS :{RESET} {BOLD}{CYAN}{max_workers} parallel threads{RESET}", UI_WIDTH, CYAN))
     if len(selected_bases) == 1:
-        print(f" Baris {start_line} ({selected_bases[0]})")
+        print(box_line(f" {DIM}SOURCE NODE  :{RESET} Baris {start_line} -> {WHITE}{selected_bases[0]}{RESET}", UI_WIDTH, CYAN))
     else:
-        print(f" Baris {start_line} s/d {end_line} ({len(selected_bases)} email)")
+        print(box_line(f" {DIM}SOURCE RANGE :{RESET} Baris {start_line} s/d {end_line} ({len(selected_bases)} base emails)", UI_WIDTH, CYAN))
+        print(box_thin_sep(UI_WIDTH, CYAN))
         preview_list = selected_bases[:5]
         for i, em in enumerate(preview_list, start=start_line):
-            print(f"  {i:4d}. {em}")
+            print(box_line(f"   {CYAN}[{i:4d}]{RESET} {WHITE}{em}{RESET}", UI_WIDTH, CYAN))
         if len(selected_bases) > 5:
-            print(f"   ... (+{len(selected_bases) - 5} email lainnya)")
-    print(f" Total : {total_votes} vote | {max_workers} threads")
-    print(f"{CYAN}{'-' * 38}{RESET}")
+            print(box_line(f"   {DIM}... (+{len(selected_bases) - 5} email lainnya dalam antrean){RESET}", UI_WIDTH, CYAN))
+    print(box_bottom(UI_WIDTH, CYAN))
 
     if require_matrix_auth:
         if not verify_1000x_matrix():
             return progress
 
-    confirm = input(f"{GREEN} Lanjut? (gas/batal): {RESET}").strip().lower()
+    confirm = input(f"\n {BOLD}{GREEN}root@Ade7asli:~#{RESET} Eksekusi misi sekarang? ({GREEN}gas{RESET}/{RED}batal{RESET}): ").strip().lower()
     if confirm != "gas":
-        print(f"\n{YELLOW}[BATAL] Progress tidak berubah.{RESET}\n")
+        print(f"\n {YELLOW}[BATAL] Eksekusi dibatalkan. Progress tidak berubah.{RESET}\n")
         return progress
 
-    # Generate antrean vote sesuai mode
     vote_queue = prepare_vote_queue(
         base_emails=selected_bases,
         variants_per_email=VARIANTS_PER_EMAIL,
@@ -680,51 +772,85 @@ def execute_menu_mode(
     progress["total_votes_sent"] = progress.get("total_votes_sent", 0) + summary.get("success_count", 0)
     save_progress(progress)
 
-    # Ringkasan akhir ringkas (38 karakter) + Telemetry Kecepatan
+    # Ringkasan akhir widescreen (80 karakter) + Telemetry Kecepatan
     elapsed = summary["elapsed_seconds"]
     speed = round(summary["attempted"] / elapsed, 1) if elapsed > 0 else 0.0
-    mission_status = "MISSION COMPLETE" if summary["failed_count"] == 0 else "PARTIAL COMPLETE"
+    is_perfect = summary["failed_count"] == 0
+    mission_status = "MISSION COMPLETE // 100% SUCCESS" if is_perfect else "PARTIAL COMPLETE // CHECK LOGS"
+    status_color = GREEN if is_perfect else YELLOW
 
-    print(f"\n{GREEN}{'=' * 38}{RESET}")
-    print(f"{BOLD}{GREEN}         {mission_status}{RESET}")
-    print(f"{GREEN}{'=' * 38}{RESET}")
-    print(f" Berhasil : {summary['success_count']}/{summary['attempted']} ({summary['success_rate_percent']}%)")
-    print(f" Gagal    : {summary['failed_count']}")
-    print(f" Durasi   : {elapsed} detik")
-    print(f" Speed    : {CYAN}{speed} vote/s{RESET}")
-    print(f" Posisi   : Baris {end_line}")
-    print(f"            {selected_bases[-1]}")
+    print()
+    print(box_top(UI_WIDTH, status_color))
+    print(box_line(f"{BOLD}{status_color}★  {mission_status}  ★{RESET}", UI_WIDTH, status_color, align="center"))
+    print(box_sep(UI_WIDTH, status_color))
+    rate_bar = render_progress_bar(summary["success_count"], summary["attempted"], bar_width=32, fill_color=status_color)
+    print(box_line(f" {DIM}SUCCESS RATE :{RESET} {rate_bar}", UI_WIDTH, status_color))
+    print(box_line(f" {DIM}BERHASIL     :{RESET} {BOLD}{GREEN}{summary['success_count']}/{summary['attempted']}{RESET}   {DIM}│  GAGAL :{RESET} {BOLD}{RED}{summary['failed_count']}{RESET}", UI_WIDTH, status_color))
+    print(box_line(f" {DIM}DURASI       :{RESET} {WHITE}{elapsed} detik{RESET}   {DIM}│  SPEED :{RESET} {BOLD}{CYAN}{speed} vote/s{RESET}", UI_WIDTH, status_color))
+    print(box_line(f" {DIM}POSISI AKHIR :{RESET} Baris {end_line} -> {WHITE}{selected_bases[-1]}{RESET}", UI_WIDTH, status_color))
+
     if summary.get("failed_items"):
-        print(f"{RED}{'-' * 38}{RESET}")
-        print(f"{RED} Daftar Gagal:{RESET}")
+        print(box_sep(UI_WIDTH, RED))
+        print(box_line(f"{BOLD}{RED}[!] DAFTAR GAGAL (TOP 10):{RESET}", UI_WIDTH, status_color))
         for item in summary["failed_items"][:10]:
-            print(f" - {item['email']}")
-            print(f"   ({item['error']})")
+            print(box_line(f" {RED}•{RESET} {WHITE}{item['email']}{RESET} {DIM}({item['error']}){RESET}", UI_WIDTH, status_color))
         if len(summary["failed_items"]) > 10:
-            print(f" ... (+{len(summary['failed_items']) - 10} lainnya di log)")
-    print(f"{GREEN}{'=' * 38}{RESET}\n")
+            print(box_line(f" {DIM}... (+{len(summary['failed_items']) - 10} lainnya tercatat di survey_run.log){RESET}", UI_WIDTH, status_color))
+
+    print(box_bottom(UI_WIDTH, status_color))
+    print()
 
     return progress
 
 
 def hacker_boot_sequence(total_emails: int):
-    """Animasi boot / hex stream singkat (1.2 detik) saat pertama kali program dibuka."""
+    """Animasi boot widescreen 80 karakter (~1.5 detik) saat program pertama dibuka."""
     boot_lines = [
-        (CYAN, f"[BOOT] 0x7FA2 9C 11 E4 00 B8 -> OK"),
-        (DIM,  f"[KERN] Mounting SKYTRAX-OPS v2.5..."),
-        (DIM,  f"[LOAD] email.json ({total_emails} nodes)..."),
-        (DIM,  f"[LOAD] f31 matrix (600 vectors)..."),
-        (CYAN, f"[SYNC] Checking progress state..."),
-        (GREEN, f"[AUTH] KEY: ADE7ASLI // VERIFIED"),
+        (CYAN,  f"[BOOT 0x7FA2] 9C 11 E4 00 B8 4F 2A 88 -> KERNEL HANDSHAKE OK"),
+        (DIM,   f"[KERN 0x801C] Mounting SKYTRAX-OPS v2.5 CYBERNETIC EDITION..."),
+        (DIM,   f"[LOAD 0x8190] Indexing email.json ({total_emails} active target nodes)..."),
+        (DIM,   f"[LOAD 0x82A4] Hydrating f31 matrix (600 randomized vectors)..."),
+        (CYAN,  f"[SYNC 0x83F8] Synchronizing state from progress.json..."),
+        (GREEN, f"[AUTH 0x84FF] SIGNATURE VERIFIED :: OPERATOR [ADE7ASLI]"),
     ]
     print()
+    print(box_top(UI_WIDTH, CYAN))
+    print(box_line(f"{BOLD}{CYAN}SKYTRAX-OPS :: SYSTEM BOOT & DIAGNOSTICS{RESET}", UI_WIDTH, CYAN, align="center"))
+    print(box_thin_sep(UI_WIDTH, CYAN))
     for color, msg in boot_lines:
-        print(f"{color}{msg}{RESET}")
-        time.sleep(0.20)  # 6 * 0.20s = 1.2 detik
+        print(box_line(f"{color}{msg}{RESET}", UI_WIDTH, CYAN))
+        time.sleep(0.25)  # 6 * 0.25s = 1.50 detik
+    print(box_bottom(UI_WIDTH, CYAN))
+
+
+def print_welcome_banner():
+    """Menampilkan ASCII Art besar WELCOME ADE7ASLI di dalam bingkai 80 karakter."""
+    welcome_art = [
+        " _    _ _____ _     _____ _____ __  __ _____ ",
+        "| |  | |  ___| |   /  __ \\  _  |  \\/  |  ___|",
+        "| |  | | |__ | |   | /  \\/ | | | .  . | |__  ",
+        "| |/\\| |  __|| |   | |   | | | | |\\/| |  __| ",
+        "\\  /\\  / |___| |___| \\__/\\ \\_/ / |  | | |___ ",
+        " \\/  \\/\\____/\\_____/\\____/\\___/\\_|  |_/\\____/",
+    ]
+    ade_art = [
+        "  ___  ______ _____ ______  ___   _____ _     _____ ",
+        " / _ \\ |  _  \\  ___|___  / / _ \\ /  ___| |   |_   _|",
+        "/ /_\\ \\| | | | |__    / / / /_\\ \\\\ `--.| |     | |  ",
+        "|  _  || | | |  __|  / /  |  _  | `--. \\ |     | |  ",
+        "| | | || |/ /| |___./ /   | | | |/\\__/ / |____ | |_ ",
+        "\\_| |_/|___/ \\____/\\_/    \\_| |_/\\____/\\_____/\\___/ ",
+    ]
+    print(box_top(UI_WIDTH, GREEN))
+    for line in welcome_art:
+        print(box_line(f"{BOLD}{CYAN}{line}{RESET}", UI_WIDTH, GREEN, align="center"))
+    for line in ade_art:
+        print(box_line(f"{BOLD}{GREEN}{line}{RESET}", UI_WIDTH, GREEN, align="center"))
+    print(box_line(f"{BOLD}{MAGENTA}<< SKYTRAX-OPS v2.5 :: HIGH-VELOCITY SURVEY COMMAND CENTER >>{RESET}", UI_WIDTH, GREEN, align="center"))
 
 
 def main():
-    """Menampilkan menu utama interaktif ala hacker beserta status progress."""
+    """Menampilkan menu utama interaktif widescreen (80 kolom) ala hacker."""
     all_emails = load_emails_from_file(EMAIL_SOURCE_FILE)
     progress = load_progress()
     hacker_boot_sequence(len(all_emails))
@@ -733,24 +859,28 @@ def main():
         next_idx = progress.get("next_index", 0)
         total_emails = len(all_emails)
         total_votes = progress.get("total_votes_sent", 0)
+        remaining = max(0, total_emails - next_idx)
 
-        print(f"{GREEN}{'-' * 38}{RESET}")
-        print(f"{BOLD}{GREEN}===        WELCOME ADE7ASLI        ==={RESET}")
-        print(f"{GREEN}{'-' * 38}{RESET}")
-        print(f" USED : {CYAN}{next_idx}/{total_emails}{RESET} | SENT : {CYAN}{total_votes} votes{RESET}")
+        print()
+        print_welcome_banner()
+        print(box_sep(UI_WIDTH, GREEN))
+        prog_bar = render_progress_bar(next_idx, total_emails, bar_width=30, fill_color=CYAN)
+        print(box_line(f" {DIM}QUEUE PROGRESS :{RESET} {prog_bar}  ({CYAN}{next_idx}/{total_emails}{RESET})", UI_WIDTH, GREEN))
+        print(box_line(f" {DIM}TOTAL SENT     :{RESET} {BOLD}{GREEN}{total_votes} votes{RESET}   {DIM}│  REMAINING :{RESET} {BOLD}{YELLOW}{remaining} emails{RESET}", UI_WIDTH, GREEN))
         if next_idx < total_emails:
-            print(f" NEXT : Baris {next_idx + 2}")
-            print(f"        {all_emails[next_idx]}")
+            print(box_line(f" {DIM}NEXT TARGET    :{RESET} {WHITE}Baris {next_idx + 2}{RESET} -> {CYAN}{all_emails[next_idx]}{RESET}", UI_WIDTH, GREEN))
         else:
-            print(f" NEXT : {YELLOW}SELESAI (Habis){RESET}")
-        print(f"{DIM}{'-' * 38}{RESET}")
-        print(f" {GREEN}[1]{RESET} 10x   (10 threads)")
-        print(f" {GREEN}[2]{RESET} 100x  (10 threads)")
-        print(f" {RED}[3]{RESET} 1000x (25 threads) {YELLOW}[HEAVY]{RESET}")
-        print(f" {DIM}[0]{RESET} EXIT")
-        print(f"{GREEN}{'=' * 38}{RESET}")
+            print(box_line(f" {DIM}NEXT TARGET    :{RESET} {BOLD}{YELLOW}ALL EMAILS EXHAUSTED (HABIS){RESET}", UI_WIDTH, GREEN))
 
-        choice = input(f" {GREEN}root@Ade7asli:~#{RESET} pilih [1/2/3/0]: ").strip()
+        print(box_sep(UI_WIDTH, GREEN))
+        print(box_line(f" {BOLD}{WHITE}SELECT EXECUTION VECTOR:{RESET}", UI_WIDTH, GREEN))
+        print(box_line(f"  {BOLD}{GREEN}[1]{RESET} {WHITE}10x   SURVEY BURST{RESET}  {DIM}│{RESET} {CYAN}10 threads{RESET}  {DIM}│{RESET}  1 base email  (10 votes)", UI_WIDTH, GREEN))
+        print(box_line(f"  {BOLD}{GREEN}[2]{RESET} {WHITE}100x  SURVEY STORM{RESET}  {DIM}│{RESET} {CYAN}10 threads{RESET}  {DIM}│{RESET} 10 base emails (100 votes)", UI_WIDTH, GREEN))
+        print(box_line(f"  {BOLD}{RED}[3]{RESET} {YELLOW}1000x OVERDRIVE{RESET}     {DIM}│{RESET} {RED}25 threads{RESET}  {DIM}│{RESET} 100 base emails {RED}[MATRIX AUTH]{RESET}", UI_WIDTH, GREEN))
+        print(box_line(f"  {DIM}[0] EXIT TERMINAL{RESET}", UI_WIDTH, GREEN))
+        print(box_bottom(UI_WIDTH, GREEN))
+
+        choice = input(f" {BOLD}{GREEN}root@Ade7asli:~#{RESET} pilih [1/2/3/0]: ").strip()
 
         if choice == "1":
             progress = execute_menu_mode(
@@ -783,10 +913,10 @@ def main():
                 require_matrix_auth=True
             )
         elif choice == "0":
-            print(f"\n{CYAN}[*] Session terminated. Goodbye Ade7asli.{RESET}\n")
+            print(f"\n {CYAN}[*] Session terminated. Goodbye Ade7asli.{RESET}\n")
             break
         else:
-            print(f"\n{RED}[!] Pilih 1, 2, 3, atau 0.{RESET}\n")
+            print(f"\n {RED}[!] Pilihan tidak valid. Ketik 1, 2, 3, atau 0.{RESET}\n")
 
 
 if __name__ == "__main__":
