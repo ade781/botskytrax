@@ -257,13 +257,28 @@ def v3_box_row(content: str = "", border_color: str = C_GRAY, align: str = "left
 # ===========================================================================
 
 def run_boot_sequence(auto: bool = False) -> None:
-    """Simulate neural link handshake, ICE bypass, and glitch decryption."""
+    """Simulate 4.5s neural link intro animation, ICE bypass, and glitch decryption."""
     clear_screen()
     print(hud_tag_row("NEON_BREACH v3.0", "BOOT::NETRUNNER", C_CYAN))
     print(v2_box_top(C_CYAN, "HUD::NEURAL_LINK"))
     print(v2_box_row(f"{C_MAG}CYBERDECK KERNEL{C_RST} :: {C_YEL}BLACK-ICE BYPASS PROTOCOL v3.0{C_RST}", C_CYAN, align="center"))
     print(v2_box_bottom(C_CYAN))
 
+    # Phase 1 (1.50s): Cyberdeck boot sweep animation
+    init_frames = 30
+    for idx in range(init_frames + 1):
+        ratio = idx / init_frames
+        pct = int(ratio * 100)
+        spin = BRAILLE_FRAMES[idx % len(BRAILLE_FRAMES)]
+        bar = v2_progress_bar(ratio, width=28, fill_color=C_MAG if idx < init_frames else C_GREEN)
+        sys.stdout.write(f"\r  {C_CYAN}[{spin}] BOOT_SEQUENCE{C_RST} [{bar}] {C_YEL}{pct:>3}%{C_RST}")
+        sys.stdout.flush()
+        if idx < init_frames:
+            time.sleep(0.05)
+    print(f"\n  {C_GREEN}[✓] KERNEL_MOUNTED :: CYBERDECK ONLINE{C_RST}\n")
+    beep(660, 35, silent=auto)
+
+    # Phase 2 (1.50s): 4-step neural handshake
     steps = [
         ("NEURAL_SYNC", "Establishing cortical socket @ 9.6 Tbps", C_CYAN),
         ("ICE_PROBE", "Scanning Arasaka-tier perimeter firewalls", C_YEL),
@@ -271,30 +286,31 @@ def run_boot_sequence(auto: bool = False) -> None:
         ("ICE_BYPASS", "Subverting sentinel lattice :: ZERO TRACE", C_GREEN),
     ]
     for code, msg, col in steps:
-        for i in range(4):
+        for i in range(5):
             spinner = BRAILLE_FRAMES[i % len(BRAILLE_FRAMES)]
             sys.stdout.write(f"\r  {col}[{spinner}] {code:<12}{C_RST} │ {msg}...")
             sys.stdout.flush()
-            time.sleep(0.05 if auto else 0.09)
+            time.sleep(0.075)
         sys.stdout.write(f"\r  {C_GREEN}[✓] {code:<12}{C_RST} │ {msg} {C_GREEN}[OK]{C_RST}\n")
         sys.stdout.flush()
         beep(740, 30, silent=auto)
 
+    # Phase 3 (1.50s): Glitch decryption + settle
     target = "NEURAL LINK ESTABLISHED :: ADE7ASLI"
     print()
-    for step in range(12):
-        reveal = int((step + 1) / 12 * len(target))
+    for step in range(20):
+        reveal = int((step + 1) / 20 * len(target))
         scrambled = "".join(
             target[idx] if idx < reveal else random.choice(GLITCH_CHARS)
             for idx in range(len(target))
         )
-        color = C_GREEN if step == 11 else (C_MAG if step % 2 == 0 else C_CYAN)
+        color = C_GREEN if step == 19 else (C_MAG if step % 2 == 0 else C_CYAN)
         sys.stdout.write(f"\r  {C_YEL}>> DECRYPT:{C_RST} {color}{scrambled}{C_RST}")
         sys.stdout.flush()
-        time.sleep(0.04 if auto else 0.06)
+        time.sleep(0.06)
     print("\n")
     beep(1046, 70, silent=auto)
-    time.sleep(0.25 if auto else 0.45)
+    time.sleep(0.30)
 
 
 # ===========================================================================
@@ -576,6 +592,48 @@ def render_aar_summary(
     beep(960, 120, silent=auto)
 
 
+def run_option3_loading(auto: bool = False) -> None:
+    """Display a 3.0s multi-stage loading animation when option 3 (1000x Overdrive) is selected."""
+    print()
+    print(f" {BOLD}{YELLOW}[*] ENGAGING 1000x OVERDRIVE VECTOR (25 THREADS)...{RESET}")
+
+    # Sub-phase A (1.20s): Pre-arming subsystem checks with spinner
+    subsystems = [
+        ("THREAD_POOL", "Allocating 25-worker burst cluster", CYAN),
+        ("OVERDRIVE_BUS", "Mounting high-velocity payload bus", MAGENTA),
+        ("ROOT_GATE", "Preparing 2x2 authorization matrix", YELLOW),
+    ]
+    for code, desc, col in subsystems:
+        for frame in range(4):
+            spin = BRAILLE_FRAMES[frame % len(BRAILLE_FRAMES)]
+            sys.stdout.write(f"\r {col}[{spin}] {code:<13}{RESET} │ {desc}...")
+            sys.stdout.flush()
+            time.sleep(0.10)
+        sys.stdout.write(f"\r {BOLD}{GREEN}[✓] {code:<13}{RESET} │ {desc} {GREEN}[ARMED]{RESET}\n")
+        sys.stdout.flush()
+        beep(780, 25, silent=auto)
+
+    # Sub-phase B (1.80s): Progress bar + live key-lock scramble
+    target_key = "0xADE71000"
+    hex_chars = "0123456789ABCDEF"
+    total_steps = 18
+    interval = 1.8 / total_steps
+    for step in range(total_steps + 1):
+        spin = BRAILLE_FRAMES[step % len(BRAILLE_FRAMES)]
+        bar = basic_progress_bar(step, total_steps, bar_width=26, fill_color=YELLOW if step < total_steps else GREEN)
+        locked = int((step / total_steps) * len(target_key))
+        key_preview = "".join(
+            target_key[i] if i < locked else random.choice(hex_chars)
+            for i in range(len(target_key))
+        )
+        sys.stdout.write(f"\r {RED}[{spin}] LOADING MATRIX{RESET} {bar} {DIM}KEY:{RESET}{CYAN}{key_preview}{RESET}")
+        sys.stdout.flush()
+        if step < total_steps:
+            time.sleep(interval)
+    print(f"\n {BOLD}{GREEN}[+] 1000x MATRIX INITIALIZED :: PROCEEDING TO ROOT AUTH{RESET}")
+    beep(880, 50, silent=auto)
+
+
 def execute_operation(choice: str, state: dict[str, int | str], auto_mode: bool = False) -> bool:
     """Dispatch selected operation. Returns False if operator exits."""
     if choice == "0":
@@ -600,6 +658,7 @@ def execute_operation(choice: str, state: dict[str, int | str], auto_mode: bool 
         return True
 
     if choice == "3":
+        run_option3_loading(auto=auto_mode)
         if not verify_1000x_matrix(auto_mode=auto_mode):
             return True
         run_preflight_and_loading("1000x_OVERDRIVE", auto=auto_mode)
